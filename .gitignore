@@ -1,0 +1,47 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Node.js
+node_modules/
+.npm/
+.yarn/
+.pnpm-store/
+
+# Framework caches and builds
+.next/
+out/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# VS Code
+.vscode/
+
+# Docker
+*.pid
+docker-compose.override.yml
+
+# Logs and local system files
+*.log
+.DS_Store
+Thumbs.db
