@@ -4,7 +4,7 @@ from decimal import Decimal
 import httpx
 import pytest
 
-from src.collectors.binance import BASE_URL, fetch_klines
+from bitcoin_analytics.collectors.binance import BASE_URL, fetch_klines
 
 
 SAMPLE_KLINE = [

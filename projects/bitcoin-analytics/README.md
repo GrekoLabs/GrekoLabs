@@ -42,6 +42,7 @@ Los precios y el volumen se modelan con `Numeric` y `Decimal` en lugar de `float
 Crear y activar el entorno virtual del proyecto:
 
 ```bash
+cd /home/grekolab/projects/GrekoLabs/projects/bitcoin-analytics
 python3 -m venv .venv
 source .venv/bin/activate
 ```
@@ -52,17 +53,48 @@ Instalar dependencias:
 pip install -r requirements.txt
 ```
 
+El archivo `requirements.txt` instala el paquete en modo editable y sus
+dependencias de ejecución, incluido el acceso a la infraestructura SQLAlchemy
+compartida del backend.
+
 Ejecutar los tests unitarios:
 
 ```bash
-PYTHONPATH=src pytest
+cd /home/grekolab/projects/GrekoLabs
+projects/bitcoin-analytics/.venv/bin/python -m pytest projects/bitcoin-analytics/tests -q
 ```
 
 Realizar una consulta pequeña a Binance Spot:
 
 ```bash
-PYTHONPATH=src python -c 'from collectors.binance import fetch_klines; print(fetch_klines("BTCUSDT", "1h", limit=5, include_open_candle=False))'
+cd /home/grekolab/projects/GrekoLabs
+projects/bitcoin-analytics/.venv/bin/python -c 'from bitcoin_analytics.collectors.binance import fetch_klines; print(fetch_klines("BTCUSDT", "1h", limit=5, include_open_candle=False))'
 ```
 
 La consulta usa el endpoint público y devuelve objetos normalizados sin escribir en
 PostgreSQL.
+
+## Carga local en PostgreSQL
+
+La persistencia vive en `backend/` y usa la sesión SQLAlchemy compartida. El script
+de desarrollo carga diez velas cerradas de `BTCUSDT` en `1h` e informa `received`,
+`inserted` y `skipped`. Requiere que `DATABASE_URL` esté configurada en el entorno;
+no incluye credenciales en el código.
+
+Desde la raíz del repositorio, configura `DATABASE_URL` usando el archivo local
+existente y ejecuta el módulo instalado:
+
+```bash
+cd /home/grekolab/projects/GrekoLabs
+set -a
+source infrastructure/.env
+set +a
+export DATABASE_URL="postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:${POSTGRES_PORT:-5432}/${POSTGRES_DB}"
+projects/bitcoin-analytics/.venv/bin/python -m bitcoin_analytics.load_historical --create-tables
+projects/bitcoin-analytics/.venv/bin/python -m bitcoin_analytics.load_historical
+```
+
+`--create-tables` es una acción explícita de desarrollo local: ejecuta
+`Base.metadata.create_all(bind=engine)` antes de la primera carga. No se ejecuta al
+importar módulos ni durante el arranque de FastAPI. La segunda ejecución demuestra
+la idempotencia mediante la restricción única de `bitcoin_candles`.

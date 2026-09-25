@@ -5,9 +5,10 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
+BACKEND_DIR = Path(__file__).resolve().parent.parent
+ENV_FILE = BACKEND_DIR / ".env"
 
-load_dotenv(ENV_FILE)
+load_dotenv(dotenv_path=ENV_FILE, override=False)
 
 
 @dataclass(frozen=True)
