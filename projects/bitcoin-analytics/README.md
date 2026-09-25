@@ -4,7 +4,8 @@ Proyecto analítico para trabajar con datos históricos y de tiempo real de Bitc
 
 Los modelos persistentes y la configuración de acceso a PostgreSQL viven en `backend/`.
 Este proyecto no administra su propio engine ni sesiones de SQLAlchemy; consume las
-interfaces de persistencia del backend cuando sea necesario.
+interfaces de persistencia del backend cuando sea necesario. El sistema está diseñado
+para almacenar datos provenientes de múltiples exchanges.
 
 ## Vela OHLCV
 
@@ -16,7 +17,7 @@ Una vela OHLCV representa el comportamiento de un símbolo durante un intervalo 
 - **Close**: precio de cierre.
 - **Volume**: volumen negociado durante el intervalo.
 
-Cada vela se identifica por el símbolo, el intervalo y su timestamp.
+Cada vela se identifica por el exchange, el símbolo, el intervalo y su timestamp.
 
 ## Precisión financiera
 

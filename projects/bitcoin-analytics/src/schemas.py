@@ -8,6 +8,7 @@ class BitcoinCandleBase(BaseModel):
     """Shared fields for an OHLCV candle."""
 
     timestamp: datetime
+    exchange: str
     symbol: str
     interval: str
     open: Decimal
