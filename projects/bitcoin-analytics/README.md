@@ -3,10 +3,9 @@
 Proyecto analítico para trabajar con datos históricos y de tiempo real de Bitcoin.
 
 El collector de Binance consulta market data público de Binance Spot y normaliza
-velas OHLCV al esquema `BitcoinCandleCreate`. En esta etapa solo descarga datos:
-no guarda en PostgreSQL ni usa credenciales, WebSockets o collectors en tiempo real.
-Por defecto excluye la vela cuya `close time` todavía está en el futuro; se puede
-usar `include_open_candle=True` cuando también se necesite la vela en formación.
+velas OHLCV al esquema `BitcoinCandleCreate`. El backfill y la reparación escriben
+candles cerradas en PostgreSQL con el servicio compartido del backend. No se
+requieren credenciales de Binance.
 
 Los modelos persistentes y la configuración de acceso a PostgreSQL viven en `backend/`.
 Este proyecto no administra su propio engine ni sesiones de SQLAlchemy; consume las
@@ -28,14 +27,6 @@ Cada vela se identifica por el exchange, el símbolo, el intervalo y su timestam
 ## Precisión financiera
 
 Los precios y el volumen se modelan con `Numeric` y `Decimal` en lugar de `float`. Los números de punto flotante pueden introducir errores de representación binaria, algo que no es apropiado para cálculos financieros ni para comparar valores con precisión.
-
-## Próximos pasos
-
-- Definir migraciones para crear la tabla en PostgreSQL.
-- Ampliar la ingestión histórica a más exchanges.
-- Añadir ingestión de datos en tiempo real mediante WebSockets.
-- Desarrollar análisis y generación de features.
-- Incorporar forecasting y modelos de machine learning.
 
 ## Entorno local
 
@@ -74,27 +65,80 @@ projects/bitcoin-analytics/.venv/bin/python -c 'from bitcoin_analytics.collector
 La consulta usa el endpoint público y devuelve objetos normalizados sin escribir en
 PostgreSQL.
 
-## Carga local en PostgreSQL
+## Historical backfill y gap repair
 
-La persistencia vive en `backend/` y usa la sesión SQLAlchemy compartida. El script
-de desarrollo carga diez velas cerradas de `BTCUSDT` en `1h` e informa `received`,
-`inserted` y `skipped`. Requiere que `DATABASE_URL` esté configurada en el entorno;
-no incluye credenciales en el código.
+El backfill usa `SessionLocal`, el modelo `BitcoinCandle` y
+`save_bitcoin_candles()` de `backend/`. El backend carga automáticamente
+`backend/.env`; también se puede configurar `DATABASE_URL` en el entorno. La tabla
+debe existir antes de ejecutar estos comandos. Los intervalos admitidos son `1m`,
+`5m`, `15m`, `1h`, `4h` y `1d`; `all` los procesa en ese orden: `1d`, `4h`, `1h`,
+`15m`, `5m`, `1m`.
 
-Desde la raíz del repositorio, configura `DATABASE_URL` usando el archivo local
-existente y ejecuta el módulo instalado:
+Desde la raíz del repositorio, primero inspecciona el plan sin hacer solicitudes a
+Binance ni escribir velas:
 
 ```bash
 cd /home/grekolab/projects/GrekoLabs
-set -a
-source infrastructure/.env
-set +a
-export DATABASE_URL="postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:${POSTGRES_PORT:-5432}/${POSTGRES_DB}"
-projects/bitcoin-analytics/.venv/bin/python -m bitcoin_analytics.load_historical --create-tables
-projects/bitcoin-analytics/.venv/bin/python -m bitcoin_analytics.load_historical
+projects/bitcoin-analytics/.venv/bin/python -m bitcoin_analytics.backfill \
+  --interval 1d --start 2020-01-01 --dry-run
 ```
 
-`--create-tables` es una acción explícita de desarrollo local: ejecuta
-`Base.metadata.create_all(bind=engine)` antes de la primera carga. No se ejecuta al
-importar módulos ni durante el arranque de FastAPI. La segunda ejecución demuestra
-la idempotencia mediante la restricción única de `bitcoin_candles`.
+Para descargar el histórico completo cerrado hasta el límite actual:
+
+```bash
+projects/bitcoin-analytics/.venv/bin/python -m bitcoin_analytics.backfill \
+  --interval 1d --start 2020-01-01
+```
+
+`--end` es exclusivo y, si se omite, corresponde al inicio de la última vela que
+todavía está en formación. Fechas y horas sin zona se interpretan como UTC. Por
+ejemplo, `--end 2024-01-01` incluye velas con timestamp anterior a esa medianoche.
+`--limit` configura velas por página (entre 1 y el máximo real de Binance, 1000).
+El comando pagina cronológicamente y persiste cada página; nunca carga toda la
+historia en memoria.
+
+La reanudación es segura: cada ejecución vuelve a buscar timestamps ausentes en el
+rango solicitado, y la clave única con `ON CONFLICT DO NOTHING` hace idempotente la
+persistencia. No se usa solo el máximo timestamp, así que también se retoman huecos
+anteriores. Para detectar y reparar ausencias:
+
+```bash
+projects/bitcoin-analytics/.venv/bin/python -m bitcoin_analytics.repair \
+  --interval 1d --start 2020-01-01
+```
+
+La detección agrupa timestamps contiguos con consultas PostgreSQL acotadas. Binance
+solo aporta velas reales; no se sintetizan datos. Si la API no ofrece velas para un
+período, se marca como no resuelto y se continúa. Se respetan reintentos limitados,
+`Retry-After` y el bloqueo HTTP 418; anomalías o conflictos con filas existentes
+se informan y nunca se sobrescriben. Cualquier error, conflicto o hueco no resuelto
+produce código de salida distinto de cero. El modo `--dry-run` únicamente consulta
+la base para contar rangos pendientes.
+
+### Consultas SQL de verificación
+
+Conteo y cobertura temporal de un intervalo:
+
+```sql
+SELECT count(*) AS candles,
+       min(timestamp) AS first_candle,
+       max(timestamp) AS last_candle
+FROM bitcoin_candles
+WHERE exchange = 'binance' AND symbol = 'BTCUSDT' AND interval = '1d';
+```
+
+Comprobar valores fuera de las invariantes OHLCV:
+
+```sql
+SELECT timestamp, open, high, low, close, volume
+FROM bitcoin_candles
+WHERE exchange = 'binance' AND symbol = 'BTCUSDT' AND interval = '1d'
+  AND (high < GREATEST(open, close, low)
+       OR low > LEAST(open, close, high)
+       OR volume < 0);
+```
+
+La reparación es manual y puede generar bastantes solicitudes de red, especialmente
+para intervalos cortos. No ejecute la carga histórica completa hasta haber revisado
+el resultado del `--dry-run`; no hay scheduler ni se crea/modifica el esquema de la
+base automáticamente.
